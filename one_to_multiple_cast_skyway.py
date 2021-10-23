@@ -14,9 +14,10 @@ key = "C://Users/asika/OneDrive/ドキュメント/webRTC/vscode_live_server.key
 port = 8081
 connection_num = 0
 connections = []
-sender_address = "127.0.0.1"
-sender_socket = None
-peer_id = None
+sender_addresses = ["127.0.0.1"]
+
+rooms = {}
+# keyが部屋id, valueが{"sender_socket", "peer_id", "connections"}
 print("a")
 # 後で通信している個人が本物か見分けるのもじっそうしないといけないきがする
 
@@ -24,11 +25,10 @@ print("a")
 # offerer == receiver
 # answerer == sender
 
-# 受信コールバック
-
+# idで判別して複数動画同時配信したい
 
 async def server(websocket, path):
-    global connection_num, connections, sender_socket, peer_id
+    global connection_num, connections, rooms
     remote_address = websocket.remote_address
     print(remote_address)
     connections.append(websocket)
@@ -39,40 +39,76 @@ async def server(websocket, path):
         except:
             break
         dictionary = json.loads(received_packet)
+        # msg_type, room_idで構成
+        # connect_senderの時のみ+peer_id
         promises = []
         msg_type = dictionary["msg_type"]
-        if msg_type == "connect_sender":
-            if websocket.remote_address[0] == sender_address:
-                if sender_socket is None:
-                    print("sender_connect")
-                    sender_socket = websocket
-                    peer_id = dictionary["peer_id"]
-                else:
-                    pass
-                    sender_socket = websocket
-                    peer_id = dictionary["peer_id"]
-                    # TODO senderの再接続時通信切り替えしたいよね
-        elif msg_type == "connect_receiver":
+        room_id = dictionary["room_id"]
 
-            if sender_socket is not None:
+        if room_id not in rooms:
+            room = {
+                "sender_socket": None,
+                "peer_id": None,
+                "connections": [websocket],
+            }
+            rooms[room_id] = room
+        else:
+            room = rooms[room_id]
+            if websocket not in room["connections"]:
+                room["connections"].append(websocket)
+        # 現在の通信のwebsocketが入ったroom_idのroomが存在することを保証
+
+        if msg_type == "connect_sender":
+            if websocket.remote_address[0] in sender_addresses:
+                if room["sender_socket"] is None:
+                    print("sender_connect")
+                    room["sender_socket"] = websocket
+                    # senderは上書き
+                    room["peer_id"] = dictionary["peer_id"]
+                    for connection in room["connections"]:
+                        if connection is websocket:
+                            break
+                        print("send")
+                        promise = connection.send(
+                            json.dumps({
+                                "msg_type": "connect_receiver",
+                                "room_id": room_id,
+                                "peer_id": room["peer_id"]
+                            }))
+                        promises.append(promise)
+        elif msg_type == "connect_receiver":
+            print("connect_receiver")
+            if room["sender_socket"] is not None:
                 print("send")
-                print(sender_socket)
                 promise = websocket.send(
                     json.dumps({
                         "msg_type": "connect_receiver",
-                        "peer_id": peer_id
+                        "room_id": room_id,
+                        "peer_id": room["peer_id"]
                     }))
                 promises.append(promise)
+        elif msg_type == "exit_room":
+            if websocket in room["connections"]:
+                room["connections"].remove(websocket)
+            if room["sender_socket"] is websocket:
+                room["sender_socket"] = None
+                room["peer_id"] = None
         print("{}: {}".format(path, dictionary))
         for p in promises:
             a = await p
             print(a)
-    if remote_address == sender_socket.remote_address:
-        peer_id = None
-        sender_socket = None
-    else:
-        pass
 
+    # 接続が切れたらその接続を削除
+    for room_id, room in rooms.items():
+        print(room)
+        if websocket in room["connections"]:
+            room["connections"].remove(websocket)
+        if room["sender_socket"] is websocket:
+            room["sender_socket"] = None
+            room["peer_id"] = None
+    rooms = {room_id: room for room_id,
+             room in rooms.items() if len(room["connections"]) != 0}
+    # ルームに人がいなくなったら削除
     connections.remove(websocket)
 
 

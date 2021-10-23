@@ -1,5 +1,5 @@
 const remoteVideo = document.getElementById("remote_video");
-const dataTextInput = document.getElementById("data_text");
+const roomIdInput = document.getElementById("room_id");
 remoteVideo.controls = true;
 class MoMoConnecter {
   constructor() {
@@ -357,34 +357,45 @@ function removeCodec(orgsdp, codec) {
   };
   return internalFunc(orgsdp);
 }
-const momo_connecter = new MoMoConnecter();
-window.connect_momo = momo_connecter.connect;
-window.disconnect_momo = momo_connecter.disconnect;
-window.play = momo_connecter.play;
+const momoConnecter = new MoMoConnecter();
+window.connectMomo = momoConnecter.connect;
+window.disconnectMomo = momoConnecter.disconnect;
 const SkywayPeer = require("skyway-js");
-let skyway_peers = [];
-window.connect_receiver = () => {
-  const skyway_peer = new SkywayPeer({
+const webSocket = new WebSocket("wss://127.0.0.1:8081/");
+
+let skywayPeer = null;
+let roomId = null;
+
+window.connectReceiver = () => {
+  skywayPeer = new SkywayPeer({
     key: "c07e8954-ce1b-4783-a45e-e8421ece83ce",
     debug: 3,
   });
-  skyway_peers += [skyway_peer];
-  skyway_peer.on("open", () => {
-    const webSocket = new WebSocket("wss://127.0.0.1:8081/");
-    webSocket.onopen = () => {
-      webSocket.send(
-        JSON.stringify({
-          msg_type: "connect_sender",
-          peer_id: skyway_peer.id,
-        })
-      );
-    };
+  roomId = roomIdInput.value;
+  skywayPeer.on("open", () => {
+    webSocket.send(
+      JSON.stringify({
+        msg_type: "connect_sender",
+        peer_id: skywayPeer.id,
+        room_id: roomIdInput.value,
+      })
+    );
   });
 
-  skyway_peer.on("call", (mediaConnection) => {
-    const stream = momo_connecter.getStream();
+  skywayPeer.on("call", (mediaConnection) => {
+    const stream = momoConnecter.getStream();
     console.log(stream);
     console.log("on call");
     mediaConnection.answer(stream);
   });
+};
+window.disconnectReceiver = () => {
+  skywayPeer.destroy();
+  skywayPeer = null;
+  webSocket.send(
+    JSON.stringify({
+      msg_type: "exit_room",
+      room_id: roomId,
+    })
+  );
 };
